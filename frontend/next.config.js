@@ -2,6 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
+    // Vercel Services: backend mounted at /_/backend
+    if (process.env.VERCEL) {
+      return [
+        { source: '/api/:path*', destination: '/_/backend/api/:path*' },
+      ];
+    }
     return [
       {
         source: '/api/:path*',

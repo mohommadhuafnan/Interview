@@ -24,9 +24,12 @@ export function useWebSocket({ interviewId, onMessage, enabled = true }: UseWebS
     if (!enabled || !interviewId) return;
 
     const token = localStorage.getItem('token') || '';
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+    const wsBase = process.env.NEXT_PUBLIC_WS_URL
+      || (window.location.hostname === 'localhost'
+        ? 'ws://localhost:8000'
+        : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/_/backend`);
     const clientId = `client_${Date.now()}`;
-    const url = `${wsUrl}/ws/${clientId}?token=${token}&interview_id=${interviewId}`;
+    const url = `${wsBase}/ws/${clientId}?token=${token}&interview_id=${interviewId}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

@@ -118,6 +118,37 @@ Without Supabase, the app runs with in-memory demo data.
 
 ---
 
+## Deploy to Vercel (Services)
+
+This project uses [Vercel Services](https://vercel.com/docs/services) to deploy the Next.js frontend and FastAPI backend on one domain.
+
+### `vercel.json` configuration
+
+| Service | Path | Route |
+|---------|------|-------|
+| Frontend (Next.js) | `frontend/` | `/` |
+| Backend (FastAPI) | `backend/app/main.py` | `/_/backend` |
+
+### Deploy steps
+
+1. Import [github.com/mohommadhuafnan/Interview](https://github.com/mohommadhuafnan/Interview) on [Vercel](https://vercel.com)
+2. Set **Framework Preset** to **Services**
+3. Add environment variables in Vercel dashboard:
+   - `SUPABASE_URL`, `SUPABASE_KEY`, `SECRET_KEY`
+   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+4. Deploy
+
+### Local multi-service dev
+
+```bash
+npm i -g vercel
+vercel dev -L
+```
+
+API requests from the frontend use `/api/*` rewrites → `/_/backend/api/*` on Vercel, or `http://localhost:8000/api/*` locally.
+
+---
+
 ## Demo Accounts
 
 | Role | Email | Password |
