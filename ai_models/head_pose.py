@@ -1,5 +1,10 @@
-import cv2
 import numpy as np
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 try:
     import mediapipe as mp

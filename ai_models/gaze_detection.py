@@ -1,5 +1,10 @@
-import cv2
 import numpy as np
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 try:
     import mediapipe as mp
@@ -54,6 +59,14 @@ class GazeDetector:
         return "center"
 
     def analyze(self, frame: np.ndarray) -> dict:
+        if not CV2_AVAILABLE and not MEDIAPIPE_AVAILABLE:
+            return {
+                "direction": "center",
+                "confidence": 0.0,
+                "suspicious_score": 100.0,
+                "suspicious": False,
+                "message": "Vision models unavailable on this deployment",
+            }
         if not MEDIAPIPE_AVAILABLE or self.face_mesh is None:
             return self._fallback_analysis(frame)
 
@@ -103,6 +116,14 @@ class GazeDetector:
         }
 
     def _fallback_analysis(self, frame: np.ndarray) -> dict:
+        if not CV2_AVAILABLE:
+            return {
+                "direction": "center",
+                "confidence": 0.0,
+                "suspicious_score": 100.0,
+                "suspicious": False,
+                "message": "OpenCV unavailable on this deployment",
+            }
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + "haarcascade_frontalface_default.xml"

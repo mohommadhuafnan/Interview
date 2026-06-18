@@ -8,10 +8,19 @@ from app.models.schemas import (
 from app.services.interview_service import EventService
 from app.utils.security import get_current_user
 import base64
+import io
 import numpy as np
-import cv2
+from PIL import Image
 
 router = APIRouter(prefix="/analysis", tags=["AI Analysis"])
+
+
+def _decode_frame(image_b64: str) -> np.ndarray:
+    if "," in image_b64:
+        image_b64 = image_b64.split(",")[1]
+    img_bytes = base64.b64decode(image_b64)
+    image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    return np.array(image)[:, :, ::-1]
 
 
 @router.post("/gaze")
@@ -26,12 +35,7 @@ async def analyze_gaze(
     if not image_b64:
         raise HTTPException(status_code=400, detail="Image data required")
 
-    if "," in image_b64:
-        image_b64 = image_b64.split(",")[1]
-    img_bytes = base64.b64decode(image_b64)
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
+    frame = _decode_frame(image_b64)
     result = detector.analyze(frame)
     if result.get("suspicious"):
         await EventService.create_event(
@@ -59,12 +63,7 @@ async def analyze_head_pose(
     if not image_b64:
         raise HTTPException(status_code=400, detail="Image data required")
 
-    if "," in image_b64:
-        image_b64 = image_b64.split(",")[1]
-    img_bytes = base64.b64decode(image_b64)
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
+    frame = _decode_frame(image_b64)
     result = detector.analyze(frame)
     if result.get("suspicious"):
         await EventService.create_event(
@@ -92,12 +91,7 @@ async def analyze_multi_person(
     if not image_b64:
         raise HTTPException(status_code=400, detail="Image data required")
 
-    if "," in image_b64:
-        image_b64 = image_b64.split(",")[1]
-    img_bytes = base64.b64decode(image_b64)
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
+    frame = _decode_frame(image_b64)
     result = detector.analyze(frame)
     if result.get("multiple_faces") or result.get("no_face"):
         await EventService.create_event(

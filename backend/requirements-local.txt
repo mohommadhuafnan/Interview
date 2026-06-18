@@ -1,4 +1,4 @@
-# Slim dependencies for Vercel serverless (full list in requirements.txt for local)
+# Full dependencies for local development with AI/ML features
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 python-jose[cryptography]==3.3.0
@@ -8,9 +8,17 @@ pydantic==2.10.3
 pydantic-settings==2.6.1
 email-validator==2.2.0
 supabase==2.10.0
-reportlab==4.2.5
-numpy==1.26.4
+websockets==14.1
 opencv-python-headless==4.10.0.84
+mediapipe==0.10.18
+numpy==1.26.4
+torch==2.5.1
+transformers==4.47.0
+sentence-transformers==3.3.1
+openai-whisper==20240930
+reportlab==4.2.5
+Pillow==11.0.0
+aiofiles==24.1.0
 httpx==0.28.1
 python-dotenv==1.0.1
-aiofiles==24.1.0
+psycopg2-binary==2.9.10

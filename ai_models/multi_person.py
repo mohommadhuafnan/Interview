@@ -1,19 +1,36 @@
-import cv2
 import numpy as np
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 
 class MultiPersonDetector:
     """Detect multiple faces / persons using OpenCV Haar cascades and contour analysis."""
 
     def __init__(self):
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        self.profile_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_profileface.xml"
-        )
+        self.face_cascade = None
+        self.profile_cascade = None
+        if CV2_AVAILABLE:
+            self.face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            self.profile_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_profileface.xml"
+            )
 
     def analyze(self, frame: np.ndarray) -> dict:
+        if not CV2_AVAILABLE or self.face_cascade is None:
+            return {
+                "face_count": 1,
+                "face_boxes": [],
+                "no_face": False,
+                "multiple_faces": False,
+                "confidence": 0.0,
+                "message": "Vision models unavailable on this deployment",
+            }
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.equalizeHist(gray)
 
