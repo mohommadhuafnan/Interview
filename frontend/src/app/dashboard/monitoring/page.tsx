@@ -79,7 +79,7 @@ export default function MonitoringListPage() {
   };
 
   return (
-    <main className="ml-64 p-8">
+    <div className="max-w-7xl">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold">Live Monitoring</h1>
@@ -147,6 +147,6 @@ export default function MonitoringListPage() {
           ))}
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -54,7 +54,7 @@ export default function AnalyticsPage() {
   };
 
   return (
-    <main className="ml-64 p-8">
+    <main className="max-w-7xl">
       <h1 className="text-3xl font-bold mb-8">Analytics</h1>
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="glass-card p-6">

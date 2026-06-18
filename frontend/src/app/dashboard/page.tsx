@@ -28,7 +28,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="ml-64 p-8 flex items-center justify-center min-h-screen">
+      <main className="max-w-7xl flex items-center justify-center min-h-screen">
         <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
       </main>
     );
@@ -42,7 +42,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <main className="ml-64 p-8">
+    <main className="max-w-7xl">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Dashboard Overview</h1>
         <p className="text-slate-500 mt-1">Welcome back, {user?.full_name ?? 'HR Manager'}</p>

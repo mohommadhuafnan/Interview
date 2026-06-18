@@ -1,25 +1,30 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
-  Video, Mic, Monitor, Play, Square, MessageSquare,
-  Shield, AlertTriangle, Eye, Clock, Wifi,
+  Monitor, Play, Square, MessageSquare,
+  Shield, AlertTriangle, Eye, Wifi, Share2, Share2Off,
 } from 'lucide-react';
-import { WebRTCManager, runCode } from '@/lib/webrtc';
+import { WebRTCManager } from '@/lib/webrtc';
 import {
   adminStartInterview, getSession, subscribeToSession,
   sendChatMessage, subscribeToChat, getChatMessages,
   type InterviewSession,
 } from '@/lib/interview-session';
-import { pushNotification } from '@/components/DynamicIsland';
 import TrustScoreGauge from '@/components/TrustScoreGauge';
 import EventTimeline from '@/components/EventTimeline';
 import type { SuspiciousEvent } from '@/lib/types';
 import { getSupabase } from '@/lib/supabase';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
+
+function attachStream(el: HTMLVideoElement | null, stream: MediaStream | null) {
+  if (!el || !stream) return;
+  el.srcObject = stream;
+  void el.play().catch(() => {});
+}
 
 export default function LiveMonitoringPage() {
   const { id: interviewId } = useParams<{ id: string }>();
@@ -31,12 +36,15 @@ export default function LiveMonitoringPage() {
 
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [isLive, setIsLive] = useState(false);
+  const [remoteConnected, setRemoteConnected] = useState(false);
+  const [screenActive, setScreenActive] = useState(false);
+  const [sharingScreen, setSharingScreen] = useState(false);
   const [metrics, setMetrics] = useState<Record<string, unknown>>({});
   const [events, setEvents] = useState<SuspiciousEvent[]>([]);
   const [timer, setTimer] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<Array<{ sender_name: string; message: string; sender_role: string }>>([]);
-  const [candidateCode, setCandidateCode] = useState('// Waiting for candidate code...');
+  const [candidateCode] = useState('// Waiting for candidate code...');
   const [recommendation] = useState('consider');
 
   useEffect(() => {
@@ -55,23 +63,6 @@ export default function LiveMonitoringPage() {
     return subscribeToChat(interviewId, (msg) => {
       setMessages((prev) => [...prev, msg as typeof messages[0]]);
     });
-  }, [interviewId]);
-
-  useEffect(() => {
-    const supabase = getSupabase();
-    if (!supabase) return;
-
-    const channel = supabase
-      .channel(`webrtc:${interviewId}`)
-      .on('broadcast', { event: 'signal' }, ({ payload }) => {
-        const signal = payload as { type: string; data?: Record<string, unknown> };
-        if (signal.type === 'monitoring' && signal.data) {
-          setMetrics(signal.data);
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
   }, [interviewId]);
 
   useEffect(() => {
@@ -100,21 +91,47 @@ export default function LiveMonitoringPage() {
 
     const webrtc = new WebRTCManager(interviewId, 'admin', `admin-${interviewId}`);
     webrtcRef.current = webrtc;
+    webrtc.onMonitoringData(setMetrics);
 
     try {
       const stream = await webrtc.startLocalMedia(true, true);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        await localVideoRef.current.play();
-      }
-      await webrtc.connectAsOfferer((remote) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remote;
-          remoteVideoRef.current.play();
+      attachStream(localVideoRef.current, stream);
+
+      await webrtc.connectAsOfferer(
+        (remote) => {
+          attachStream(remoteVideoRef.current, remote);
+          setRemoteConnected(true);
+        },
+        (screen) => {
+          if (screen) {
+            attachStream(screenVideoRef.current, screen);
+            setScreenActive(true);
+          } else {
+            setScreenActive(false);
+            if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
+          }
         }
-      });
+      );
     } catch (err) {
       console.error('Media error:', err);
+    }
+  };
+
+  const toggleScreenShare = async () => {
+    const webrtc = webrtcRef.current;
+    if (!webrtc) return;
+
+    if (sharingScreen) {
+      await webrtc.stopScreenShare();
+      setSharingScreen(false);
+      return;
+    }
+
+    try {
+      await webrtc.startScreenShare();
+      setSharingScreen(true);
+    } catch {
+      setSharingScreen(false);
     }
   };
 
@@ -131,42 +148,54 @@ export default function LiveMonitoringPage() {
   const candidateName = session?.candidate_name || 'Candidate';
 
   return (
-    <main className="ml-64 p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="max-w-[1600px]">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Live Monitoring</h1>
-          <p className="text-slate-500">{candidateName} · {session?.status || 'waiting'}</p>
+          <h1 className="text-xl sm:text-2xl font-bold">Live Monitoring</h1>
+          <p className="text-slate-500 text-sm">{candidateName} · {session?.status || 'waiting'}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {isLive && (
             <>
-              <span className="live-pill"><span className="live-dot" /> LIVE · {formatTime(timer)}</span>
-              <span className="flex items-center gap-1 text-sm text-emerald-600"><Wifi className="w-4 h-4" /> Good</span>
+              <span className="live-pill text-xs sm:text-sm"><span className="live-dot" /> LIVE · {formatTime(timer)}</span>
+              <span className={`text-xs sm:text-sm ${remoteConnected ? 'text-emerald-600' : 'text-amber-600'}`}>
+                <Wifi className="w-4 h-4 inline mr-1" />
+                {remoteConnected ? 'Candidate connected' : 'Waiting for candidate'}
+              </span>
             </>
           )}
+          {isLive && (
+            <button
+              type="button"
+              onClick={toggleScreenShare}
+              className="btn-secondary text-sm flex items-center gap-2 px-3 py-2"
+            >
+              {sharingScreen ? <Share2Off className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+              {sharingScreen ? 'Stop Share' : 'Share Screen'}
+            </button>
+          )}
           {!isLive ? (
-            <button onClick={handleStartInterview} className="btn-liquid-green flex items-center gap-2">
+            <button onClick={handleStartInterview} className="btn-liquid-green flex items-center gap-2 text-sm">
               <Play className="w-4 h-4" /> Start Interview
             </button>
           ) : (
-            <button onClick={() => router.push('/dashboard/monitoring')} className="btn-liquid-red flex items-center gap-2">
+            <button onClick={() => router.push('/dashboard/monitoring')} className="btn-liquid-red flex items-center gap-2 text-sm">
               <Square className="w-4 h-4" /> End Session
             </button>
           )}
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        {/* Video feeds */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="xl:col-span-2 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="glass-ios p-2 overflow-hidden">
               <p className="text-xs text-slate-500 px-2 py-1">Candidate Camera</p>
               <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden relative">
-                <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline />
-                {!isLive && (
-                  <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">
-                    Waiting for candidate video...
+                <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline autoPlay />
+                {(!isLive || !remoteConnected) && (
+                  <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs sm:text-sm text-center px-4">
+                    {isLive ? 'Waiting for candidate camera...' : 'Start interview to connect video'}
                   </div>
                 )}
               </div>
@@ -174,33 +203,38 @@ export default function LiveMonitoringPage() {
             <div className="glass-ios p-2 overflow-hidden">
               <p className="text-xs text-slate-500 px-2 py-1">Your Camera</p>
               <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden">
-                <video ref={localVideoRef} className="w-full h-full object-cover mirror" muted playsInline />
+                <video ref={localVideoRef} className="w-full h-full object-cover mirror" muted playsInline autoPlay />
               </div>
             </div>
           </div>
 
           <div className="glass-ios p-2">
-            <p className="text-xs text-slate-500 px-2 py-1 flex items-center gap-2"><Monitor className="w-3 h-3" /> Candidate Screen</p>
-            <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center text-slate-500 text-sm">
-              {isLive ? 'Screen share stream active' : 'Screen share will appear when interview starts'}
+            <p className="text-xs text-slate-500 px-2 py-1 flex items-center gap-2">
+              <Monitor className="w-3 h-3" /> Candidate Screen Share
+            </p>
+            <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden relative">
+              <video ref={screenVideoRef} className="w-full h-full object-contain" playsInline autoPlay />
+              {!screenActive && (
+                <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs sm:text-sm text-center px-4">
+                  {isLive ? 'Ask candidate to click Share Screen' : 'Screen share appears when interview starts'}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Code view */}
-          <div className="glass-ios p-4">
+          <div className="glass-ios p-4 hidden md:block">
             <p className="text-sm font-semibold mb-2 flex items-center gap-2"><Eye className="w-4 h-4" /> Candidate Code (Live)</p>
-            <div className="h-48 rounded-2xl overflow-hidden border border-white/20">
+            <div className="h-40 lg:h-48 rounded-2xl overflow-hidden border border-white/20">
               <MonacoEditor height="100%" language="javascript" theme="vs-dark" value={candidateCode}
                 options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13 }} />
             </div>
           </div>
 
-          {/* Chat */}
           <div className="glass-ios p-4">
             <p className="text-sm font-semibold mb-3 flex items-center gap-2"><MessageSquare className="w-4 h-4" /> Live Chat</p>
-            <div className="h-32 overflow-y-auto space-y-2 mb-3">
+            <div className="h-28 sm:h-32 overflow-y-auto space-y-2 mb-3">
               {messages.map((m, i) => (
-                <div key={i} className={`text-sm p-2 rounded-xl max-w-xs ${m.sender_role === 'admin' ? 'bg-blue-100 ml-auto' : 'bg-slate-100'}`}>
+                <div key={i} className={`text-sm p-2 rounded-xl max-w-[85%] ${m.sender_role === 'admin' ? 'bg-blue-100 ml-auto' : 'bg-slate-100'}`}>
                   <span className="text-xs text-slate-400">{m.sender_name}: </span>{m.message}
                 </div>
               ))}
@@ -208,16 +242,15 @@ export default function LiveMonitoringPage() {
             <div className="flex gap-2">
               <input className="input-field flex-1 text-sm" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && sendChat()} placeholder="Message candidate..." />
-              <button onClick={sendChat} className="btn-liquid px-4 text-sm">Send</button>
+              <button onClick={sendChat} className="btn-liquid px-4 text-sm shrink-0">Send</button>
             </div>
           </div>
         </div>
 
-        {/* Right panel */}
         <div className="space-y-4">
-          <div className="glass-ios p-6 flex flex-col items-center">
+          <div className="glass-ios p-4 sm:p-6 flex flex-col items-center">
             <TrustScoreGauge score={trustScore} riskLevel={trustScore >= 80 ? 'low' : trustScore >= 60 ? 'medium' : 'high'} />
-            <p className="text-sm text-slate-500 mt-2">AI Recommendation:
+            <p className="text-sm text-slate-500 mt-2 text-center">AI Recommendation:
               <span className={`ml-1 font-semibold capitalize ${recommendation === 'hire' ? 'text-emerald-600' : recommendation === 'reject' ? 'text-red-600' : 'text-amber-600'}`}>
                 {recommendation}
               </span>
@@ -249,6 +282,6 @@ export default function LiveMonitoringPage() {
           </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

@@ -48,7 +48,7 @@ export default function ResumeScreeningPage() {
   };
 
   return (
-    <main className="ml-64 p-8 max-w-3xl">
+    <main className="max-w-7xl max-w-3xl">
       <h1 className="text-3xl font-bold mb-2">AI Resume Screening</h1>
       <p className="text-slate-500 mb-8">Upload CV for AI-powered skill extraction and scoring</p>
 

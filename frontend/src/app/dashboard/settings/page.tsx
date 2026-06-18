@@ -14,7 +14,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="ml-64 p-8 max-w-2xl">
+    <main className="max-w-7xl max-w-2xl">
       <h1 className="text-3xl font-bold mb-8">Settings</h1>
 
       <div className="glass-ios divide-y divide-white/20">

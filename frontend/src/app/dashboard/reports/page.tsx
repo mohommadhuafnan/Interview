@@ -26,7 +26,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <main className="ml-64 p-8">
+    <main className="max-w-7xl">
       <h1 className="text-3xl font-bold mb-8">Reports</h1>
       <div className="grid gap-4">
         {interviews.map((interview) => (

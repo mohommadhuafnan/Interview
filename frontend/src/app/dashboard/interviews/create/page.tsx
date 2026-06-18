@@ -40,7 +40,7 @@ export default function CreateInterviewPage() {
   };
 
   return (
-    <main className="ml-64 p-8 max-w-2xl">
+    <main className="max-w-7xl max-w-2xl">
       <h1 className="text-3xl font-bold mb-2">Create Interview</h1>
       <p className="text-slate-500 mb-8">Generate a Zoom-style invite link for your candidate</p>
 
