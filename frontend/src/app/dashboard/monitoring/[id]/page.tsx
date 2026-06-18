@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
   Monitor, Play, Square, MessageSquare,
-  Shield, AlertTriangle, Eye, Wifi, Share2, Share2Off,
+  Shield, AlertTriangle, Eye, Wifi, Share2, MonitorOff,
 } from 'lucide-react';
 import { WebRTCManager } from '@/lib/webrtc';
 import {
@@ -170,7 +170,7 @@ export default function LiveMonitoringPage() {
               onClick={toggleScreenShare}
               className="btn-secondary text-sm flex items-center gap-2 px-3 py-2"
             >
-              {sharingScreen ? <Share2Off className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+              {sharingScreen ? <MonitorOff className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
               {sharingScreen ? 'Stop Share' : 'Share Screen'}
             </button>
           )}
