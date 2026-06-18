@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.models.schemas import (
     InterviewCreate,
+    InterviewInviteCreate,
     SuspiciousEventCreate,
     TrustScoreResponse,
     TrustScoreRequest,
@@ -23,6 +24,18 @@ async def create_interview(
     user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.HR, UserRole.INTERVIEWER)),
 ):
     return await InterviewService.create(data)
+
+
+@router.post("/create-invite")
+async def create_interview_invite(
+    data: InterviewInviteCreate,
+    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.HR, UserRole.INTERVIEWER)),
+):
+    result = await InterviewService.create_with_invite(data, created_by=user.get("sub"))
+    return {
+        "interview": result["interview"],
+        "invite_link": f"/join/{result['invite_token']}",
+    }
 
 
 @router.get("/")

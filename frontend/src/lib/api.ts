@@ -1,15 +1,15 @@
-const API_URL = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_API_URL ?? '')
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
-
 import {
   isDemoMode,
   demoUser,
   demoInterviews,
   demoEvents,
+  DEMO_TOKEN,
 } from './demo';
+import { API_BASE } from './env';
 
 export type { User, Interview, SuspiciousEvent } from './types';
+
+const API_URL = API_BASE;
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -37,6 +37,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 function demoRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (path === '/api/auth/login') {
+    return Promise.resolve({ access_token: DEMO_TOKEN, user: demoUser } as T);
+  }
+  if (path === '/api/auth/register') {
+    const body = options.body ? JSON.parse(String(options.body)) : {};
+    return Promise.resolve({
+      access_token: DEMO_TOKEN,
+      user: {
+        ...demoUser,
+        email: body.email || demoUser.email,
+        full_name: body.full_name || demoUser.full_name,
+        role: body.role || demoUser.role,
+      },
+    } as T);
+  }
   if (path === '/api/auth/me') return Promise.resolve(demoUser as T);
   if (path === '/api/interviews/') return Promise.resolve(demoInterviews as T);
   if (path.startsWith('/api/interviews/') && path.endsWith('/events')) {
@@ -61,6 +76,19 @@ function demoRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   if (path.includes('/reports/generate')) {
     return Promise.resolve({ report_url: '/reports/demo-report.pdf' } as T);
+  }
+  if (path === '/api/interviews/create-invite') {
+    const body = options.body ? JSON.parse(String(options.body)) : {};
+    const token = 'demo-' + Date.now();
+    return Promise.resolve({
+      interview: {
+        id: 'demo-interview-new',
+        title: body.title || 'Demo Interview',
+        status: 'scheduled',
+        questions: body.questions || [],
+      },
+      invite_link: `/join/${token}`,
+    } as T);
   }
   if (options.method === 'POST' || options.method === 'PATCH') {
     return Promise.resolve({ ok: true } as T);
@@ -150,6 +178,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ interview_id: interviewId }),
     }),
+
+  createInterviewInvite: (data: { title: string; questions?: string[] }) =>
+    request<{ interview: import('./types').Interview; invite_link: string }>(
+      '/api/interviews/create-invite',
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
 };
 
 export function getDashboardPath(role: string): string {

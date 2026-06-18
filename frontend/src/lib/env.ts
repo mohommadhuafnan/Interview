@@ -2,11 +2,10 @@ function resolveApiUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  // Vercel Services: use same-origin rewrites (/api -> /_/backend/api)
-  if (process.env.NEXT_PUBLIC_VERCEL_URL || process.env.VERCEL) {
+  if (typeof window !== 'undefined') {
     return '';
   }
-  if (typeof window !== 'undefined') {
+  if (process.env.NEXT_PUBLIC_VERCEL_URL || process.env.VERCEL) {
     return '';
   }
   return 'http://localhost:8000';
@@ -25,3 +24,6 @@ function resolveWsUrl(): string {
 
 export const API_BASE = resolveApiUrl();
 export const WS_BASE = resolveWsUrl();
+
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+export const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '';

@@ -4,10 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { Shield, Mail, Lock } from 'lucide-react';
-import { enableDemoMode } from '@/lib/demo';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, demoLogin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -75,7 +74,7 @@ export default function LoginPage() {
 
           <button
             type="button"
-            onClick={() => { enableDemoMode(); window.location.href = '/dashboard'; }}
+            onClick={demoLogin}
             className="btn-secondary w-full"
           >
             Open Demo Dashboard (no login needed)

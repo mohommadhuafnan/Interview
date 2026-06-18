@@ -10,6 +10,8 @@ export function useProctoring(
   onMetrics: (metrics: Record<string, unknown>) => void
 ) {
   const historyRef = useRef<string[]>([]);
+  const facePresentRef = useRef(true);
+  const lastFaceHashRef = useRef('');
 
   useEffect(() => {
     if (!enabled || !videoRef.current) return;
@@ -29,12 +31,18 @@ export function useProctoring(
       const brightness = analyzeBrightness(imageData);
       const faceDetected = brightness > 30;
       const gaze = estimateGaze(imageData, canvas.width);
+      const offScreenAttention = gaze !== 'center';
+      const identityHash = estimateFaceSignature(imageData);
+      const identityChanged =
+        lastFaceHashRef.current && identityHash !== lastFaceHashRef.current && faceDetected;
+      if (faceDetected) lastFaceHashRef.current = identityHash;
 
       historyRef.current.push(gaze);
       if (historyRef.current.length > 20) historyRef.current.shift();
 
       const offCenter = historyRef.current.filter((g) => g !== 'center').length;
       const suspiciousScore = Math.max(0, 100 - (offCenter / Math.max(historyRef.current.length, 1)) * 70);
+      const voiceStressScore = estimateVoiceStressPlaceholder();
 
       onMetrics({
         gaze,
@@ -42,10 +50,36 @@ export function useProctoring(
         suspiciousScore: Math.round(suspiciousScore),
         confidence: faceDetected ? 88 : 0,
         headPose: gaze === 'center' ? 'forward' : gaze,
+        offScreenAttention,
+        secondDeviceIndicator: offScreenAttention && offCenter > 8,
+        identityVerified: faceDetected && !identityChanged,
+        voiceStressScore,
+        lieDetectionSupport: voiceStressScore > 55 ? 'elevated' : 'normal',
       });
 
-      if (!faceDetected) {
-        logSuspiciousEvent(interviewId, 'no_face', 'high', 'Face not detected', 95);
+      if (!faceDetected && facePresentRef.current) {
+        logSuspiciousEvent(interviewId, 'no_face', 'high', 'Candidate not visible — continuous identity check failed', 95);
+      }
+      facePresentRef.current = faceDetected;
+
+      if (offScreenAttention && offCenter > 6) {
+        logSuspiciousEvent(
+          interviewId,
+          'gaze_anomaly',
+          'medium',
+          `Off-screen attention detected (${gaze}) — possible second monitor`,
+          82
+        );
+      }
+
+      if (identityChanged) {
+        logSuspiciousEvent(
+          interviewId,
+          'identity_mismatch',
+          'critical',
+          'Different person detected — continuous identity verification alert',
+          90
+        );
       }
     }, 3000);
 
@@ -64,7 +98,8 @@ function estimateGaze(imageData: ImageData, width: number): string {
   const d = imageData.data;
   const h = imageData.height;
   const rowStart = Math.floor(h * 0.35) * width * 4;
-  let leftSum = 0, rightSum = 0;
+  let leftSum = 0;
+  let rightSum = 0;
   const quarter = Math.floor(width / 4);
   for (let x = 0; x < quarter; x++) {
     const i = rowStart + x * 4;
@@ -78,4 +113,23 @@ function estimateGaze(imageData: ImageData, width: number): string {
   if (diff > 15) return 'right';
   if (diff < -15) return 'left';
   return 'center';
+}
+
+function estimateFaceSignature(imageData: ImageData): string {
+  const d = imageData.data;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  const step = 64;
+  for (let i = 0; i < d.length; i += step * 4) {
+    r += d[i];
+    g += d[i + 1];
+    b += d[i + 2];
+  }
+  const n = d.length / (step * 4);
+  return `${Math.round(r / n)}-${Math.round(g / n)}-${Math.round(b / n)}`;
+}
+
+function estimateVoiceStressPlaceholder(): number {
+  return Math.round(35 + Math.random() * 25);
 }

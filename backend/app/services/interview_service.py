@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 from app.database import get_supabase
-from app.models.schemas import InterviewCreate, RiskLevel
+import secrets
+from app.models.schemas import InterviewCreate, InterviewInviteCreate, RiskLevel
 
 _interviews_store: dict[str, dict] = {}
 _events_store: list[dict] = []
@@ -62,6 +63,48 @@ class InterviewService:
         else:
             _interviews_store[record["id"]] = record
         return record
+
+    @staticmethod
+    async def create_with_invite(data: InterviewInviteCreate, created_by: Optional[str] = None) -> dict:
+        token = secrets.token_urlsafe(32)
+        interview_id = str(uuid.uuid4())
+        record = {
+            "id": interview_id,
+            "title": data.title,
+            "candidate_id": None,
+            "interviewer_id": None,
+            "status": "scheduled",
+            "questions": data.questions or [
+                "Tell us about yourself.",
+                "Describe a technical challenge you solved.",
+            ],
+            "trust_score": None,
+            "risk_level": None,
+            "invite_token": token,
+            "coding_languages": ["javascript", "python", "java", "cpp", "c", "csharp"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "scheduled_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        supabase = get_supabase()
+        if not supabase:
+            _interviews_store[interview_id] = record
+            return {"interview": record, "invite_token": token}
+
+        supabase.table("interviews").insert(record).execute()
+        supabase.table("interview_invitations").insert(
+            {
+                "interview_id": interview_id,
+                "invite_token": token,
+                "created_by": created_by,
+                "is_active": True,
+            }
+        ).execute()
+        supabase.table("interview_sessions").insert(
+            {"interview_id": interview_id, "status": "scheduled"}
+        ).execute()
+
+        return {"interview": record, "invite_token": token}
 
     @staticmethod
     async def list_all(role: str, user_id: str) -> list[dict]:

@@ -36,8 +36,27 @@ export async function createInterviewWithInvite(data: {
   questions?: string[];
   created_by?: string;
 }) {
+  const { api } = await import('./api');
+  const { isDemoMode } = await import('./demo');
+
+  if (!isDemoMode()) {
+    try {
+      const result = await api.createInterviewInvite({
+        title: data.title,
+        questions: data.questions,
+      });
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const path = result.invite_link.startsWith('http')
+        ? result.invite_link
+        : `${origin}${result.invite_link}`;
+      return { interview: result.interview, inviteLink: path };
+    } catch {
+      // fall through to direct Supabase client
+    }
+  }
+
   const supabase = getSupabase();
-  if (!supabase) throw new Error('Supabase not configured');
+  if (!supabase) throw new Error('Supabase not configured — sign in and try again');
 
   const token = generateToken();
   const { data: interview, error } = await supabase

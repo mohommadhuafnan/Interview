@@ -1,9 +1,11 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
-import { api, getDashboardPath } from './api';
+import { getDashboardPath } from './api';
+import { loginUser, registerUser, resolveCurrentUser } from './auth-service';
 import type { User } from './types';
 import { enableDemoMode, getDemoUser, DEMO_TOKEN } from './demo';
+import { getSupabase } from './supabase';
 import { useRouter } from 'next/navigation';
 
 interface AuthContextType {
@@ -23,26 +25,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const init = async () => {
+      const token = localStorage.getItem('token');
 
-    if (!token || token === DEMO_TOKEN) {
-      if (!token) enableDemoMode();
-      setUser(getDemoUser());
-      setLoading(false);
-      return;
-    }
+      if (!token) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
 
-    api.me()
-      .then(setUser)
-      .catch(() => {
-        enableDemoMode();
+      if (token === DEMO_TOKEN) {
         setUser(getDemoUser());
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const profile = await resolveCurrentUser(token);
+        if (profile) {
+          setUser(profile);
+        } else {
+          localStorage.removeItem('token');
+          setUser(null);
+        }
+      } catch {
+        localStorage.removeItem('token');
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    init();
   }, []);
 
   const login = async (email: string, password: string) => {
-    const res = await api.login(email, password);
+    const res = await loginUser(email, password);
+    if (!res?.user?.role) {
+      throw new Error('Login failed — user profile missing');
+    }
     localStorage.setItem('token', res.access_token);
     localStorage.removeItem('demo_user');
     setUser(res.user);
@@ -50,7 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const register = async (data: { email: string; password: string; full_name: string; role: string }) => {
-    const res = await api.register(data);
+    const res = await registerUser(data);
+    if (!res?.user?.role) {
+      throw new Error('Registration failed — user profile missing');
+    }
     localStorage.setItem('token', res.access_token);
     localStorage.removeItem('demo_user');
     setUser(res.user);
@@ -65,9 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const logout = () => {
-    enableDemoMode();
-    setUser(getDemoUser());
-    router.push('/dashboard');
+    localStorage.removeItem('token');
+    localStorage.removeItem('demo_user');
+    getSupabase()?.auth.signOut().catch(() => {});
+    setUser(null);
+    router.push('/login');
   };
 
   return (

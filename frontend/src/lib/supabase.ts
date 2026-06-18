@@ -1,18 +1,22 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '';
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './env';
 
 let client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient | null {
-  if (!url || !key) return null;
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) return null;
   if (!client) {
-    client = createClient(url, key);
+    client = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
   }
   return client;
 }
 
 export function isSupabaseConfigured(): boolean {
-  return Boolean(url && key);
+  return Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
 }

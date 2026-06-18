@@ -33,11 +33,39 @@ def decode_token(token: str) -> dict:
     settings = get_settings()
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        ) from exc
+    except JWTError:
+        pass
+
+    from app.database import get_supabase
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            auth_user = supabase.auth.get_user(token)
+            if auth_user and auth_user.user:
+                email = auth_user.user.email or ""
+                user_id = auth_user.user.id
+                result = (
+                    supabase.table("users")
+                    .select("id,email,role")
+                    .eq("email", email)
+                    .execute()
+                )
+                if result.data:
+                    profile = result.data[0]
+                    return {
+                        "sub": profile["id"],
+                        "email": profile["email"],
+                        "role": profile["role"],
+                    }
+                return {"sub": user_id, "email": email, "role": "candidate"}
+        except Exception:
+            pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+    )
 
 
 async def get_current_user(

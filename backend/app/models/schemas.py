@@ -45,10 +45,15 @@ class TokenResponse(BaseModel):
 
 class InterviewCreate(BaseModel):
     title: str
-    candidate_id: str
+    candidate_id: Optional[str] = None
     interviewer_id: Optional[str] = None
     questions: list[str] = []
     scheduled_at: Optional[datetime] = None
+
+
+class InterviewInviteCreate(BaseModel):
+    title: str
+    questions: list[str] = []
 
 
 class InterviewResponse(BaseModel):
