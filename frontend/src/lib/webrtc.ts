@@ -1,6 +1,26 @@
 import { getSupabase } from './supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
+
 export type SignalPayload =
   | { type: 'offer'; sdp: RTCSessionDescriptionInit; from: string; clientId: string }
   | { type: 'answer'; sdp: RTCSessionDescriptionInit; from: string; clientId: string }
@@ -15,11 +35,15 @@ export class WebRTCManager {
   private localStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
   private screenSender: RTCRtpSender | null = null;
+  private remoteCameraStream: MediaStream | null = null;
+  private remoteScreenStream: MediaStream | null = null;
   private role: string;
   private clientId: string;
   private interviewId: string;
+  private isPolite: boolean;
   private pendingSignals: SignalPayload[] = [];
   private makingOffer = false;
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
   private onRemoteStream?: (stream: MediaStream) => void;
   private onRemoteScreen?: (stream: MediaStream | null) => void;
   private onMonitoring?: (data: Record<string, unknown>) => void;
@@ -28,6 +52,7 @@ export class WebRTCManager {
     this.interviewId = interviewId;
     this.role = role;
     this.clientId = clientId;
+    this.isPolite = role === 'candidate';
     this.setupSignaling();
   }
 
@@ -50,7 +75,7 @@ export class WebRTCManager {
   }
 
   private broadcast(payload: SignalPayload) {
-    this.channel?.send({ type: 'broadcast', event: 'signal', payload });
+    void this.channel?.send({ type: 'broadcast', event: 'signal', payload });
   }
 
   private async handleSignal(signal: SignalPayload) {
@@ -60,12 +85,13 @@ export class WebRTCManager {
     }
 
     if (signal.type === 'screen-share' && !signal.active) {
+      this.remoteScreenStream = null;
       this.onRemoteScreen?.(null);
       return;
     }
 
     if (signal.type === 'ready') {
-      if (this.role === 'admin' && this.pc && this.localStream) {
+      if (!this.isPolite && this.pc && this.localStream) {
         await this.sendOffer();
       }
       return;
@@ -87,12 +113,42 @@ export class WebRTCManager {
     }
   }
 
+  private attachRemoteTrack(track: MediaStreamTrack) {
+    const isScreen =
+      track.kind === 'video' &&
+      (track.label.toLowerCase().includes('screen') ||
+        track.label.toLowerCase().includes('window') ||
+        track.label.toLowerCase().includes('display'));
+
+    if (isScreen) {
+      if (!this.remoteScreenStream) this.remoteScreenStream = new MediaStream();
+      this.remoteScreenStream.getTracks().forEach((t) => {
+        if (t.kind === track.kind) this.remoteScreenStream?.removeTrack(t);
+      });
+      this.remoteScreenStream.addTrack(track);
+      this.onRemoteScreen?.(this.remoteScreenStream);
+      return;
+    }
+
+    if (track.kind === 'video' || track.kind === 'audio') {
+      if (!this.remoteCameraStream) this.remoteCameraStream = new MediaStream();
+      const existing = this.remoteCameraStream.getTracks().filter((t) => t.kind === track.kind);
+      existing.forEach((t) => this.remoteCameraStream?.removeTrack(t));
+      this.remoteCameraStream.addTrack(track);
+      if (track.kind === 'video') {
+        this.onRemoteStream?.(this.remoteCameraStream);
+      }
+    }
+  }
+
   private async processSignal(signal: SignalPayload) {
     if (!this.pc) return;
 
     try {
       if (signal.type === 'offer') {
-        if (this.pc.signalingState !== 'stable' && !this.makingOffer) {
+        const collision = this.makingOffer || this.pc.signalingState !== 'stable';
+        if (collision && !this.isPolite) return;
+        if (collision && this.isPolite) {
           await this.pc.setLocalDescription({ type: 'rollback' } as RTCSessionDescriptionInit);
         }
         await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -100,9 +156,15 @@ export class WebRTCManager {
         await this.pc.setLocalDescription(answer);
         this.broadcast({ type: 'answer', sdp: answer, from: this.role, clientId: this.clientId });
       } else if (signal.type === 'answer') {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        if (this.pc.signalingState === 'have-local-offer') {
+          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        }
       } else if (signal.type === 'ice' && signal.candidate) {
-        await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        try {
+          await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } catch {
+          // ICE candidates can arrive after connection settles
+        }
       }
     } catch (err) {
       console.error('WebRTC signal error:', err);
@@ -121,7 +183,7 @@ export class WebRTCManager {
 
   async startScreenShare(onLocalPreview?: (stream: MediaStream) => void): Promise<MediaStream> {
     this.screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { displaySurface: 'monitor' } as MediaTrackConstraints,
+      video: true,
       audio: false,
     });
 
@@ -147,7 +209,23 @@ export class WebRTCManager {
       this.screenSender = this.pc.addTrack(track, stream);
     }
 
-    await this.sendOffer();
+    if (!this.isPolite) {
+      await this.sendOffer();
+    } else {
+      await this.sendRenegotiationOffer();
+    }
+  }
+
+  private async sendRenegotiationOffer() {
+    if (!this.pc || this.makingOffer) return;
+    try {
+      this.makingOffer = true;
+      const offer = await this.pc.createOffer();
+      await this.pc.setLocalDescription(offer);
+      this.broadcast({ type: 'offer', sdp: offer, from: this.role, clientId: this.clientId });
+    } finally {
+      this.makingOffer = false;
+    }
   }
 
   async stopScreenShare() {
@@ -161,12 +239,7 @@ export class WebRTCManager {
   }
 
   private createPeerConnection(): RTCPeerConnection {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
-    });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -180,24 +253,14 @@ export class WebRTCManager {
     };
 
     pc.ontrack = (e) => {
-      const stream = e.streams[0];
-      if (!stream) return;
-      const isScreen =
-        e.track.label.toLowerCase().includes('screen') ||
-        e.track.label.toLowerCase().includes('window') ||
-        e.track.label.toLowerCase().includes('display') ||
-        stream.getVideoTracks().some((t) => t.label.toLowerCase().includes('screen'));
-
-      if (isScreen) {
-        this.onRemoteScreen?.(stream);
-      } else {
-        this.onRemoteStream?.(stream);
-      }
+      const track = e.track;
+      track.onunmute = () => this.attachRemoteTrack(track);
+      if (!track.muted) this.attachRemoteTrack(track);
     };
 
-    pc.onnegotiationneeded = async () => {
-      if (this.pc === pc) {
-        await this.sendOffer();
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        void this.sendOffer();
       }
     };
 
@@ -205,10 +268,10 @@ export class WebRTCManager {
   }
 
   private async sendOffer() {
-    if (!this.pc || this.makingOffer) return;
+    if (!this.pc || this.makingOffer || this.isPolite) return;
     try {
       this.makingOffer = true;
-      const offer = await this.pc.createOffer();
+      const offer = await this.pc.createOffer({ iceRestart: this.pc.connectionState === 'failed' });
       await this.pc.setLocalDescription(offer);
       this.broadcast({ type: 'offer', sdp: offer, from: this.role, clientId: this.clientId });
     } finally {
@@ -222,12 +285,14 @@ export class WebRTCManager {
   ) {
     this.onRemoteStream = onRemote;
     this.onRemoteScreen = onScreen;
+    if (this.pc) return;
     this.pc = this.createPeerConnection();
     this.localStream?.getTracks().forEach((t) => {
       if (this.localStream) this.pc!.addTrack(t, this.localStream);
     });
     await this.flushPendingSignals();
     await this.sendOffer();
+    this.startReconnectLoop();
   }
 
   async connectAsAnswerer(
@@ -236,11 +301,24 @@ export class WebRTCManager {
   ) {
     this.onRemoteStream = onRemote;
     this.onRemoteScreen = onScreen;
+    if (this.pc) return;
     this.pc = this.createPeerConnection();
     this.localStream?.getTracks().forEach((t) => {
       if (this.localStream) this.pc!.addTrack(t, this.localStream);
     });
     await this.flushPendingSignals();
+  }
+
+  private startReconnectLoop() {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setInterval(() => {
+      if (!this.pc || this.isPolite) return;
+      if (this.pc.connectionState === 'connected' && this.remoteCameraStream?.getVideoTracks()[0]?.readyState === 'live') {
+        return;
+      }
+      void this.sendOffer();
+      this.broadcast({ type: 'ready', from: this.role, clientId: this.clientId });
+    }, 4000);
   }
 
   onMonitoringData(callback: (data: Record<string, unknown>) => void) {
@@ -260,6 +338,10 @@ export class WebRTCManager {
   }
 
   disconnect() {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.screenStream?.getTracks().forEach((t) => t.stop());
     this.pc?.close();
@@ -307,4 +389,17 @@ export function getDeviceFingerprint(): Record<string, string> {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     cores: String(navigator.hardwareConcurrency || 'unknown'),
   };
+}
+
+export function attachVideoStream(
+  el: HTMLVideoElement | null,
+  stream: MediaStream | null,
+  muted = false
+) {
+  if (!el || !stream) return;
+  el.srcObject = stream;
+  el.muted = muted;
+  void el.play().catch(() => {
+    setTimeout(() => void el.play().catch(() => {}), 500);
+  });
 }

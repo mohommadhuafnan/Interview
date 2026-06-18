@@ -1,30 +1,25 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
   Monitor, Play, Square, MessageSquare,
-  Shield, AlertTriangle, Eye, Wifi, Share2, MonitorOff,
+  Shield, AlertTriangle, Wifi, Share2, MonitorOff, Code2,
 } from 'lucide-react';
-import { WebRTCManager } from '@/lib/webrtc';
+import { WebRTCManager, attachVideoStream } from '@/lib/webrtc';
 import {
   adminStartInterview, getSession, subscribeToSession,
   sendChatMessage, subscribeToChat, getChatMessages,
   type InterviewSession,
 } from '@/lib/interview-session';
+import { subscribeLiveCode, fetchLatestCode } from '@/lib/live-coding';
 import TrustScoreGauge from '@/components/TrustScoreGauge';
 import EventTimeline from '@/components/EventTimeline';
 import type { SuspiciousEvent } from '@/lib/types';
 import { getSupabase } from '@/lib/supabase';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
-
-function attachStream(el: HTMLVideoElement | null, stream: MediaStream | null) {
-  if (!el || !stream) return;
-  el.srcObject = stream;
-  void el.play().catch(() => {});
-}
 
 export default function LiveMonitoringPage() {
   const { id: interviewId } = useParams<{ id: string }>();
@@ -44,13 +39,70 @@ export default function LiveMonitoringPage() {
   const [timer, setTimer] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<Array<{ sender_name: string; message: string; sender_role: string }>>([]);
-  const [candidateCode] = useState('// Waiting for candidate code...');
+  const [candidateCode, setCandidateCode] = useState('// Waiting for candidate to type code...');
+  const [codeLanguage, setCodeLanguage] = useState('javascript');
+  const [codeOutput, setCodeOutput] = useState('');
   const [recommendation] = useState('consider');
 
+  const onRemoteVideo = useCallback((stream: MediaStream) => {
+    attachVideoStream(remoteVideoRef.current, stream, false);
+    if (stream.getVideoTracks().length > 0) {
+      setRemoteConnected(true);
+    }
+  }, []);
+
+  const onRemoteScreen = useCallback((stream: MediaStream | null) => {
+    if (stream) {
+      attachVideoStream(screenVideoRef.current, stream, false);
+      setScreenActive(true);
+    } else {
+      setScreenActive(false);
+      if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
+    }
+  }, []);
+
   useEffect(() => {
-    getSession(interviewId).then(setSession);
-    return subscribeToSession(interviewId, setSession);
+    getSession(interviewId).then((s) => {
+      setSession(s);
+      if (s?.status === 'live') setIsLive(true);
+    });
+    return subscribeToSession(interviewId, (s) => {
+      setSession(s);
+      if (s.status === 'live') setIsLive(true);
+    });
   }, [interviewId]);
+
+  useEffect(() => {
+    fetchLatestCode(interviewId).then((latest) => {
+      if (!latest) return;
+      setCandidateCode(latest.code);
+      setCodeLanguage(latest.language);
+      if (latest.output) setCodeOutput(latest.output);
+    });
+    return subscribeLiveCode(interviewId, (payload) => {
+      setCandidateCode(payload.code);
+      setCodeLanguage(payload.language);
+      if (payload.output !== undefined) setCodeOutput(payload.output);
+    });
+  }, [interviewId]);
+
+  useEffect(() => {
+    const webrtc = new WebRTCManager(interviewId, 'admin', `admin-${interviewId}`);
+    webrtcRef.current = webrtc;
+    webrtc.onMonitoringData(setMetrics);
+
+    (async () => {
+      try {
+        const stream = await webrtc.startLocalMedia(true, true);
+        attachVideoStream(localVideoRef.current, stream, true);
+        await webrtc.connectAsOfferer(onRemoteVideo, onRemoteScreen);
+      } catch (err) {
+        console.error('Media error:', err);
+      }
+    })();
+
+    return () => webrtc.disconnect();
+  }, [interviewId, onRemoteVideo, onRemoteScreen]);
 
   useEffect(() => {
     if (!isLive) return;
@@ -88,33 +140,7 @@ export default function LiveMonitoringPage() {
   const handleStartInterview = async () => {
     await adminStartInterview(interviewId);
     setIsLive(true);
-
-    const webrtc = new WebRTCManager(interviewId, 'admin', `admin-${interviewId}`);
-    webrtcRef.current = webrtc;
-    webrtc.onMonitoringData(setMetrics);
-
-    try {
-      const stream = await webrtc.startLocalMedia(true, true);
-      attachStream(localVideoRef.current, stream);
-
-      await webrtc.connectAsOfferer(
-        (remote) => {
-          attachStream(remoteVideoRef.current, remote);
-          setRemoteConnected(true);
-        },
-        (screen) => {
-          if (screen) {
-            attachStream(screenVideoRef.current, screen);
-            setScreenActive(true);
-          } else {
-            setScreenActive(false);
-            if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
-          }
-        }
-      );
-    } catch (err) {
-      console.error('Media error:', err);
-    }
+    setTimer(0);
   };
 
   const toggleScreenShare = async () => {
@@ -160,7 +186,7 @@ export default function LiveMonitoringPage() {
               <span className="live-pill text-xs sm:text-sm"><span className="live-dot" /> LIVE · {formatTime(timer)}</span>
               <span className={`text-xs sm:text-sm ${remoteConnected ? 'text-emerald-600' : 'text-amber-600'}`}>
                 <Wifi className="w-4 h-4 inline mr-1" />
-                {remoteConnected ? 'Candidate connected' : 'Waiting for candidate'}
+                {remoteConnected ? 'Both cameras connected' : 'Connecting candidate camera...'}
               </span>
             </>
           )}
@@ -193,9 +219,9 @@ export default function LiveMonitoringPage() {
               <p className="text-xs text-slate-500 px-2 py-1">Candidate Camera</p>
               <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden relative">
                 <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline autoPlay />
-                {(!isLive || !remoteConnected) && (
+                {!remoteConnected && (
                   <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs sm:text-sm text-center px-4">
-                    {isLive ? 'Waiting for candidate camera...' : 'Start interview to connect video'}
+                    Waiting for candidate camera — ensure candidate opened the live interview page
                   </div>
                 )}
               </div>
@@ -216,18 +242,28 @@ export default function LiveMonitoringPage() {
               <video ref={screenVideoRef} className="w-full h-full object-contain" playsInline autoPlay />
               {!screenActive && (
                 <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs sm:text-sm text-center px-4">
-                  {isLive ? 'Ask candidate to click Share Screen' : 'Screen share appears when interview starts'}
+                  Ask candidate to click Share Screen in their interview room
                 </div>
               )}
             </div>
           </div>
 
-          <div className="glass-ios p-4 hidden md:block">
-            <p className="text-sm font-semibold mb-2 flex items-center gap-2"><Eye className="w-4 h-4" /> Candidate Code (Live)</p>
-            <div className="h-40 lg:h-48 rounded-2xl overflow-hidden border border-white/20">
-              <MonacoEditor height="100%" language="javascript" theme="vs-dark" value={candidateCode}
-                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13 }} />
+          <div className="glass-ios p-4">
+            <p className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Code2 className="w-4 h-4" /> Candidate Code (Live)
+            </p>
+            <div className="h-48 sm:h-56 rounded-2xl overflow-hidden border border-white/20">
+              <MonacoEditor
+                height="100%"
+                language={codeLanguage === 'cpp' ? 'cpp' : codeLanguage}
+                theme="vs-dark"
+                value={candidateCode}
+                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, automaticLayout: true }}
+              />
             </div>
+            {codeOutput && (
+              <pre className="mt-3 p-3 rounded-xl bg-slate-900 text-emerald-400 text-xs overflow-auto max-h-28">{codeOutput}</pre>
+            )}
           </div>
 
           <div className="glass-ios p-4">

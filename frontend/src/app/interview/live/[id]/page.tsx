@@ -7,10 +7,11 @@ import {
   Mic, MicOff, Video, VideoOff, Monitor,
   MessageSquare, Code, Pen, Shield, AlertTriangle, Share2,
 } from 'lucide-react';
-import { WebRTCManager, runCode } from '@/lib/webrtc';
+import { WebRTCManager, runCode, attachVideoStream } from '@/lib/webrtc';
 import { useProctoring } from '@/hooks/useProctoring';
 import { useSecurityLockdown, useInterviewMonitor } from '@/hooks/useSecurityLockdown';
 import { saveCodeSubmission, sendChatMessage, subscribeToChat, getChatMessages } from '@/lib/interview-session';
+import { broadcastLiveCode } from '@/lib/live-coding';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -23,10 +24,8 @@ const LANGUAGES = [
   { id: 'csharp', label: 'C#', template: 'using System;\nclass Program { static void Main() { Console.WriteLine("Hello"); } }' },
 ];
 
-function attachStream(el: HTMLVideoElement | null, stream: MediaStream | null) {
-  if (!el || !stream) return;
-  el.srcObject = stream;
-  void el.play().catch(() => {});
+function attachStream(el: HTMLVideoElement | null, stream: MediaStream | null, muted = false) {
+  attachVideoStream(el, stream, muted);
 }
 
 export default function LiveInterviewPage() {
@@ -34,6 +33,7 @@ export default function LiveInterviewPage() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const webrtcRef = useRef<WebRTCManager | null>(null);
+  const codeBroadcastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [camOn, setCamOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
@@ -82,11 +82,13 @@ export default function LiveInterviewPage() {
     (async () => {
       try {
         const stream = await webrtc.startLocalMedia(true, true);
-        attachStream(localVideoRef.current, stream);
+        attachStream(localVideoRef.current, stream, true);
 
         await webrtc.connectAsAnswerer((remote) => {
-          attachStream(remoteVideoRef.current, remote);
-          setConnected(true);
+          attachStream(remoteVideoRef.current, remote, false);
+          if (remote.getVideoTracks().length > 0) setConnected(true);
+        }, (screen) => {
+          if (screen) attachStream(remoteVideoRef.current, screen, false);
         });
       } catch {
         setAlerts((prev) => ['Camera/mic access required for the interview', ...prev]);
@@ -126,11 +128,39 @@ export default function LiveInterviewPage() {
     }
   };
 
+  const syncLiveCode = useCallback(
+    (nextCode: string, nextLanguage: string, nextOutput?: string, action: 'typing' | 'run' = 'typing') => {
+      broadcastLiveCode(interviewId, {
+        code: nextCode,
+        language: nextLanguage,
+        output: nextOutput,
+        action,
+      });
+    },
+    [interviewId]
+  );
+
+  const handleCodeChange = (value: string) => {
+    setCode(value);
+    if (codeBroadcastTimer.current) clearTimeout(codeBroadcastTimer.current);
+    codeBroadcastTimer.current = setTimeout(() => {
+      syncLiveCode(value, language);
+    }, 350);
+  };
+
+  const handleLanguageChange = (nextLanguage: string) => {
+    const template = LANGUAGES.find((l) => l.id === nextLanguage)?.template || '';
+    setLanguage(nextLanguage);
+    setCode(template);
+    syncLiveCode(template, nextLanguage);
+  };
+
   const handleRunCode = async () => {
     setRunning(true);
     const result = await runCode(language, code);
     setOutput(result);
     await saveCodeSubmission(interviewId, language, code, result);
+    syncLiveCode(code, language, result, 'run');
     setRunning(false);
   };
 
@@ -204,7 +234,7 @@ export default function LiveInterviewPage() {
             <div className="flex-1 flex flex-col gap-3 glass-ios !bg-black/30 !border-white/10 p-3 sm:p-4 min-h-[320px]">
               <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <select className="input-field !bg-white/10 !text-white !border-white/20 max-w-full sm:max-w-xs text-sm" value={language}
-                  onChange={(e) => { setLanguage(e.target.value); setCode(LANGUAGES.find((l) => l.id === e.target.value)?.template || ''); }}>
+                  onChange={(e) => handleLanguageChange(e.target.value)}>
                   {LANGUAGES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
                 </select>
                 <button onClick={handleRunCode} disabled={running} className="btn-liquid-green text-sm px-4 py-2">
@@ -213,7 +243,7 @@ export default function LiveInterviewPage() {
               </div>
               <div className="flex-1 min-h-[240px] rounded-2xl overflow-hidden border border-white/10">
                 <MonacoEditor height="100%" language={language === 'cpp' ? 'cpp' : language} theme="vs-dark" value={code}
-                  onChange={(v) => setCode(v || '')} options={{ minimap: { enabled: false }, fontSize: 14, automaticLayout: true }} />
+                  onChange={(v) => handleCodeChange(v || '')} options={{ minimap: { enabled: false }, fontSize: 14, automaticLayout: true }} />
               </div>
               {output && (
                 <pre className="glass-panel !bg-black/40 p-3 sm:p-4 text-xs sm:text-sm text-emerald-400 rounded-2xl overflow-auto max-h-32">{output}</pre>
