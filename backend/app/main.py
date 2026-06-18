@@ -16,8 +16,11 @@ from app.routes import auth, interviews, analysis, websocket
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    os.makedirs(settings.upload_dir, exist_ok=True)
-    os.makedirs(settings.reports_dir, exist_ok=True)
+    for directory in (settings.upload_dir, settings.reports_dir):
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            pass
     yield
 
 

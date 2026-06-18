@@ -30,12 +30,16 @@ def _seed_demo_users():
         }
 
 
-_seed_demo_users()
+def _ensure_demo_users():
+    if get_supabase():
+        return
+    _seed_demo_users()
 
 
 class AuthService:
     @staticmethod
     async def register(data: UserCreate) -> dict:
+        _ensure_demo_users()
         supabase = get_supabase()
         user_record = {
             "id": str(uuid.uuid4()),
@@ -79,6 +83,7 @@ class AuthService:
 
     @staticmethod
     async def login(data: UserLogin) -> dict:
+        _ensure_demo_users()
         supabase = get_supabase()
         user = None
 
